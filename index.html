@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>计算器</title>
+<style>
+  :root{
+    --bg:#141414;
+    --panel:#1c1c1e;
+    --key:#2c2c2e;
+    --key-hover:#3a3a3c;
+    --fn:#3a3a3c;
+    --accent:#d98a3d;
+    --accent-hover:#e69a4d;
+    --text:#f2f2f7;
+    --muted:#8e8e93;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex;align-items:center;justify-content:center;
+    padding:20px;
+    overflow:hidden;
+  }
+  .calc{
+    width:100%;max-width:360px;
+    background:var(--panel);
+    border-radius:28px;
+    padding:20px 18px 18px;
+    box-shadow:0 24px 60px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.05) inset;
+  }
+  .screen{
+    padding:8px 8px 18px;
+    text-align:right;
+    min-height:118px;
+    display:flex;flex-direction:column;justify-content:flex-end;
+  }
+  .expr{
+    font-size:14px;color:var(--muted);
+    min-height:20px;line-height:20px;
+    letter-spacing:.02em;
+    overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+    transition:opacity .15s;
+  }
+  .out{
+    font-size:52px;font-weight:300;
+    line-height:1.1;letter-spacing:-.02em;
+    margin-top:6px;
+    overflow:hidden;white-space:nowrap;
+    font-variant-numeric:tabular-nums;
+    transition:font-size .12s ease;
+  }
+  .out.shrink{font-size:38px;}
+  .out.error{color:#ff6b6b;font-size:38px;}
+  .keys{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:10px;
+  }
+  button{
+    border:0;outline:0;cursor:pointer;
+    font-family:inherit;font-size:22px;font-weight:400;
+    color:var(--text);
+    background:var(--key);
+    border-radius:16px;
+    height:62px;
+    transition:background .12s,transform .06s;
+    user-select:none;
+  }
+  button:hover{background:var(--key-hover);}
+  button:active{transform:scale(.96);background:#48484a;}
+  button.fn{background:var(--fn);color:#fff;font-weight:500;}
+  button.fn:hover{background:#48484a;}
+  button.accent{background:var(--accent);font-weight:500;}
+  button.accent:hover{background:var(--accent-hover);}
+  button.zero{grid-column:span 2;}
+  @media (max-width:400px){
+    .out{font-size:44px;}
+    button{height:56px;font-size:20px;}
+    .calc{padding:16px 14px 14px;border-radius:24px;}
+  }
+  @media (max-height:620px){
+    button{height:50px;}
+    .screen{min-height:96px;}
+  }
+</style>
+</head>
+<body>
+  <main class="calc" role="application" aria-label="计算器">
+    <div class="screen">
+      <div class="expr" id="expr" aria-live="polite"></div>
+      <div class="out" id="out" aria-live="polite">0</div>
+    </div>
+    <div class="keys">
+      <button class="fn" data-action="clear">AC</button>
+      <button class="fn" data-action="back">⌫</button>
+      <button class="fn" data-action="percent">%</button>
+      <button class="fn" data-op="/">÷</button>
+
+      <button data-digit="7">7</button>
+      <button data-digit="8">8</button>
+      <button data-digit="9">9</button>
+      <button class="fn" data-op="*">×</button>
+
+      <button data-digit="4">4</button>
+      <button data-digit="5">5</button>
+      <button data-digit="6">6</button>
+      <button class="fn" data-op="-">−</button>
+
+      <button data-digit="1">1</button>
+      <button data-digit="2">2</button>
+      <button data-digit="3">3</button>
+      <button class="fn" data-op="+">+</button>
+
+      <button data-action="sign">±</button>
+      <button data-digit="0">0</button>
+      <button data-action="dot">.</button>
+      <button class="accent" data-action="equals">=</button>
+    </div>
+  </main>
+
+<script>
+(function(){
+  "use strict";
+
+  var outEl  = document.getElementById("out");
+  var exprEl = document.getElementById("expr");
+
+  // state
+  var current = "0";       // 当前输入的数字串
+  var stored  = null;      // 已保存的操作数
+  var op      = null;      // 待执行运算符
+  var fresh   = true;      // 下一位数字是否开启新数字
+  var errored = false;
+
+  var OP_MARK = { "+":"+", "-":"−", "*":"×", "/":"÷" };
+
+  function fmt(value){
+    var str = String(value);
+    // 为整数部分加千分位，保留小数部分原样
+    if(!/^-?\d*\.?\d*$/.test(str)) return str;
+    var neg = str.charAt(0) === "-";
+    if(neg) str = str.slice(1);
+    var parts = str.split(".");
+    var intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    if(intPart === "") intPart = "0";
+    var s = intPart + (parts.length > 1 ? "." + parts[1] : (str.indexOf(".") === str.length-1 ? "." : ""));
+    return (neg ? "-" : "") + s;
+  }
+
+  function render(){
+    var display = fmt(current);
+    outEl.textContent = display;
+    outEl.classList.toggle("shrink", display.length > 9);
+    outEl.classList.toggle("error", errored);
+
+    if(op !== null && stored !== null){
+      exprEl.textContent = fmt(round(stored)) + " " + OP_MARK[op];
+    } else {
+      exprEl.textContent = "";
+    }
+  }
+
+  function round(n){
+    if(!isFinite(n)) return n;
+    return parseFloat(n.toPrecision(12));
+  }
+
+  function toNum(s){ return parseFloat(s); }
+
+  function inputDigit(d){
+    if(errored) reset();
+    if(fresh){ current = d; fresh = false; }
+    else {
+      if(current === "0") current = d;
+      else if(current.replace(/[-.]/g,"").length >= 12) return; // 上限
+      else current += d;
+    }
+    render();
+  }
+
+  function inputDot(){
+    if(errored) reset();
+    if(fresh){ current = "0."; fresh = false; }
+    else if(current.indexOf(".") === -1) current += ".";
+    render();
+  }
+
+  function toggleSign(){
+    if(errored) return;
+    if(current === "0") return;
+    current = current.charAt(0) === "-" ? current.slice(1) : "-" + current;
+    render();
+  }
+
+  function percent(){
+    if(errored) return;
+    current = String(round(toNum(current) / 100));
+    fresh = false;
+    render();
+  }
+
+  function clearAll(){
+    current = "0"; stored = null; op = null; fresh = true; errored = false;
+    render();
+  }
+  function reset(){ clearAll(); }
+
+  function backspace(){
+    if(errored){ reset(); return; }
+    if(fresh) return;
+    current = current.slice(0, -1);
+    if(current === "" || current === "-"){ current = "0"; fresh = true; }
+    render();
+  }
+
+  function apply(a, b, operator){
+    switch(operator){
+      case "+": return a + b;
+      case "-": return a - b;
+      case "*": return a * b;
+      case "/": return b === 0 ? null : a / b;
+    }
+    return b;
+  }
+
+  function chooseOp(next){
+    if(errored) return;
+    var val = toNum(current);
+
+    if(op !== null && !fresh){
+      var r = apply(stored, val, op);
+      if(r === null){ fail(); return; }
+      stored = round(r);
+      current = String(stored);
+    } else if(stored === null){
+      stored = val;
+    } else if(fresh && op !== null){
+      // 连按运算符：只换运算符
+    }
+
+    op = next;
+    fresh = true;
+    render();
+  }
+
+  function equals(){
+    if(errored || op === null) return;
+    var val = toNum(current);
+    var r = apply(stored, val, op);
+    if(r === null){ fail(); return; }
+
+    var expr = fmt(round(stored)) + " " + OP_MARK[op] + " " + fmt(current) + " =";
+    stored = null;
+    op = null;
+    current = String(round(r));
+    fresh = true;
+
+    render();
+    exprEl.textContent = expr;
+  }
+
+  function fail(){
+    current = "错误"; errored = true; stored = null; op = null; fresh = true;
+    render();
+  }
+
+  // 事件绑定
+  document.querySelectorAll("button").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      handle(btn);
+    });
+  });
+
+  function handle(btn){
+    if(btn.dataset.digit !== undefined) return inputDigit(btn.dataset.digit);
+    if(btn.dataset.op !== undefined)    return chooseOp(btn.dataset.op);
+    switch(btn.dataset.action){
+      case "clear":  return clearAll();
+      case "back":   return backspace();
+      case "dot":    return inputDot();
+      case "sign":   return toggleSign();
+      case "percent":return percent();
+      case "equals": return equals();
+    }
+  }
+
+  // 键盘
+  var KEYMAP = {
+    "Enter":"=", "=":"=", "Escape":"AC", "Backspace":"BACK", "Delete":"AC",
+    "+":"+", "-":"-", "*":"*", "x":"*", "X":"*", "/":"/",
+    "0":"0","1":"1","2":"2","3":"3","4":"4",
+    "5":"5","6":"6","7":"7","8":"8","9":"9",
+    ".":".", ",":".", "%":"%"
+  };
+
+  document.addEventListener("keydown", function(e){
+    if(e.ctrlKey || e.metaKey || e.altKey) return;
+    var k = KEYMAP[e.key];
+    if(k === undefined) return;
+    e.preventDefault();
+    if(k === "=") return equals();
+    if(k === "AC") return clearAll();
+    if(k === "BACK") return backspace();
+    if(k === "%") return percent();
+    if(k === ".") return inputDot();
+    if("+-*/".indexOf(k) !== -1) return chooseOp(k);
+    return inputDigit(k);
+  });
+
+  // 曝光给测试
+  window.__calc = { inputDigit, inputDot, toggleSign, percent, clearAll, backspace, chooseOp, equals, state: function(){ return { current, stored, op, fresh, errored }; } };
+
+  render();
+})();
+</script>
+</body>
+</html>
